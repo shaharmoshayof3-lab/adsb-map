@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>מפת פמ"ת (GeoTIFF) + מטוסים (100NM סביב נתב"ג)</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <style>
+    html, body, #map { height:100%; margin:0; }
+    .panel {position:absolute;top:16px;right:16px;z-index:1000;background:#fff;padding:12px 14px;border-radius:12px;box-shadow:0 10px 25px rgba(0,0,0,.2);max-width:360px;font-family:system-ui,Arial;}
+    .plane-icon { width:28px;height:28px;transform:translate(-14px,-14px);} 
+    .plane-icon svg { width:28px;height:28px;transform-origin:50% 50%;}
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+  <div class="panel">
+    <h3>מפת פמ"ת (GeoTIFF) + מטוסים סביב נתב"ג</h3>
+    <input id="file" type="file" accept=".tif,.tiff" />
+    <input id="opacity" type="range" min="0" max="1" step="0.02" value="0.7" />
+    <select id="provider"><option value="adsb.lol">ADSB.lol</option></select>
+    <input id="distNm" type="number" min="10" max="150" step="5" value="100" />
+    <button id="centerLlbg">מרכז נתב"ג</button>
+    <button id="clearOverlay">הסר GeoTIFF</button>
+    <div id="status"></div><div id="error" style="color:red"></div>
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/geotiff@2.1.3/dist-browser/geotiff.min.js"></script>
+  <script src="https://unpkg.com/georaster@1.6.1/dist/georaster.browser.min.js"></script>
+  <script src="https://unpkg.com/georaster-layer-for-leaflet@3.10.0/dist/georaster-layer-for-leaflet.min.js"></script>
+  <script>
+  const LLBG={lat:31.9906,lon:34.8663};let DIST_NM=100;
+  const map=L.map('map').setView([LLBG.lat,LLBG.lon],10);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19}).addTo(map);
+  let planesLayer=L.layerGroup().addTo(map);let planeMarkers=new Map();let geoLayer=null;
+
+  function planeIcon(deg){const svg='<svg viewBox="0 0 24 24" style="transform: rotate('+deg+'deg);"><path d="M12 2l2.5 7H22l-7 5 2.5 8L12 17 4.5 22 7 12 0 9h7.5L12 2z" fill="currentColor"/></svg>';return L.divIcon({className:'plane-icon',html:svg,iconSize:[28,28],iconAnchor:[14,14]});}
+
+  function tooltipHTML(p){const id=p.callsign||p.hex||'N/A';const alt=p.alt||'?';const gs=p.spd||'?';const hdg=isFinite(p.hdg)?Math.round(p.hdg):'?';return id+'<br/>ALT: '+alt+'ft | GS: '+gs+'kt | HDG: '+hdg+'°';}
+  function setStatus(m){document.getElementById('status').textContent=m;}
+  function setError(m){document.getElementById('error').textContent=m;}
+
+  async function fetchPlanesLOL(lat,lon,distNm){
+    const url='https://api.adsb.lol/v2/point/'+lat+'/'+lon+'/'+distNm;
+    const r=await fetch(url,{cache:'no-store'});
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    const data=await r.json();
+    return (data.ac||[]).map(p=>({lat:p.lat,lon:p.lon,hdg:Number(p.track||0),spd:p.gs,alt:p.alt_baro,callsign:(p.flight||'').trim(),hex:p.hex})).filter(m=>Number.isFinite(m.lat)&&Number.isFinite(m.lon)&&m.hex);
+  }
+
+  async function refresh(){
+    setError('');
+    try{
+      const planes=await fetchPlanesLOL(LLBG.lat,LLBG.lon,DIST_NM);
+      const seen=new Set();
+      planes.forEach(p=>{seen.add(p.hex);const pos=[p.lat,p.lon];if(!planeMarkers.has(p.hex)){const marker=L.marker(pos,{icon:planeIcon(p.hdg)}).bindTooltip(tooltipHTML(p));marker.addTo(planesLayer);planeMarkers.set(p.hex,{marker,last:Date.now()});}else{const obj=planeMarkers.get(p.hex);obj.marker.setLatLng(pos);obj.marker.setIcon(planeIcon(p.hdg));obj.marker.setTooltipContent(tooltipHTML(p));obj.last=Date.now();}});
+      for(const [h,obj] of planeMarkers.entries()){if(!seen.has(h)&&Date.now()-obj.last>60000){obj.marker.remove();planeMarkers.delete(h);}}
+      setStatus('נמצאו '+planes.length+' מטוסים | מקור: ADSB.lol');
+    }catch(e){setError(e.message);}
+  }
+  setInterval(refresh,10000);refresh();
+
+  async function loadGeoTiff(file){
+    try{
+      const arr=await file.arrayBuffer();const georaster=await parseGeoraster(arr);
+      if(geoLayer){map.removeLayer(geoLayer);}geoLayer=new GeoRasterLayer({georaster,opacity:Number(document.getElementById('opacity').value||0.7),resolution:256});
+      geoLayer.addTo(map);map.fitBounds(geoLayer.getBounds());
+      setStatus('GeoTIFF נטען בהצלחה');
+    }catch(err){setError('טעינת GeoTIFF נכשלה: '+err.message);}
+  }
+
+  document.getElementById('file').addEventListener('change',e=>{const f=e.target.files[0];if(f)loadGeoTiff(f);});
+  document.getElementById('opacity').addEventListener('input',e=>{if(geoLayer)geoLayer.setOpacity(Number(e.target.value));});
+  document.getElementById('clearOverlay').addEventListener('click',()=>{if(geoLayer){map.removeLayer(geoLayer);geoLayer=null;}});
+  document.getElementById('centerLlbg').addEventListener('click',()=>map.setView([LLBG.lat,LLBG.lon],10));
+  </script>
+</body></html>
