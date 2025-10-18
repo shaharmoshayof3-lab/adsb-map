@@ -166,13 +166,20 @@
     }catch(e){ setError('שגיאה: ' + e.message); }
   }
 
-  // אתחול: ודא שה-parseGeoraster קיים לפני טעינה אוטומטית של ATS1.tif
+  // 1) המטוסים — תמיד נתחיל אותם מיד, בלי תלות ב-GeoTIFF
+  refresh();
+  setInterval(refresh, 10000);
+
+  // 2) ה-GeoTIFF — נטען בנפרד, כש-georaster זמין
   (async function(){
     var ok = await ensureParseGeoraster();
-    if (!ok){ setError('טעינת GeoTIFF נכשלה: georaster לא נטען'); return; }
+    if (!ok){
+      console.warn('georaster לא נטען — מדלגים על טעינת GeoTIFF');
+      return; // לא מפילים את המטוסים
+    }
     await loadGeoTiffFromUrl(GEO_TIFF_URL);
-    refresh(); setInterval(refresh, 10000);
   })();
+
 
   // ==== GeoTIFF helpers ====
   async function loadGeoTiffFromUrl(url){
