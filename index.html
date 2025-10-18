@@ -16,9 +16,8 @@
     #status{font-size:12px; color:#14532d}
     #error{font-size:12px; color:#b91c1c}
 
-    /* --- אייקון מטוס שמסתובב לפי heading --- */
     .plane-icon{ width:28px; height:28px; transform:translate(-14px,-14px); }
-    .plane-icon svg{ width:28px; height:28px; transform-origin:50% 50%; }
+    .plane-icon img{ width:28px; height:28px; transform-origin:50% 50%; }
     .leaflet-tooltip{direction:rtl; text-align:right}
   </style>
 </head>
@@ -54,10 +53,8 @@
 <script src="https://unpkg.com/georaster@1.6.1/dist/georaster.browser.min.js"></script>
 <script src="https://unpkg.com/georaster-layer-for-leaflet@3.10.0/dist/georaster-layer-for-leaflet.min.js"></script>
 <script>
-  // ===== הגדרות =====
   var LLBG = { lat: 31.9906, lon: 34.8663 };
   var DIST_NM = 100;
-  // שים כאן את כתובת ה-Worker שלך (אם שינית שם, עדכן)
   var PROXY_BASE = 'https://misty-wildflower-6947.shaharmoshayof3.workers.dev';
 
   var map = L.map('map', { preferCanvas:true }).setView([LLBG.lat, LLBG.lon], 10);
@@ -74,12 +71,11 @@
   }
   updateCircle();
 
-  // --- אייקון מטוס ---
-  function planeIcon(deg){
-    var svg = '<svg viewBox="0 0 24 24" style="transform: rotate(' + (deg||0) + 'deg);">' +
-              '  <path d="M12 2l2.6 7.8H22l-7.5 5.3 2.8 8.9L12 18.2 4.7 24l2.8-8.9L0 9.8h7.4L12 2z" fill="#111" />' +
-              '</svg>';
-    return L.divIcon({ className:'plane-icon', html:svg, iconSize:[28,28], iconAnchor:[14,14] });
+  // אייקון המטוס מתוך הקובץ a320.svg (בריפו שלך)
+  function planeImgIcon(deg, size){
+    var s = size || 28;
+    var html = '<img src="a320.svg" style="width:'+s+'px;height:'+s+'px;transform:rotate('+(deg||0)+'deg);transform-origin:50% 50%">';
+    return L.divIcon({ className:'plane-icon', html: html, iconSize:[s,s], iconAnchor:[s/2,s/2] });
   }
 
   function tooltipHTML(p){
@@ -113,13 +109,13 @@
         seen.add(p.hex);
         var pos = [p.lat, p.lon];
         if (!planeMarkers.has(p.hex)){
-          var marker = L.marker(pos, { icon: planeIcon(p.hdg) }).bindTooltip(tooltipHTML(p));
+          var marker = L.marker(pos, { icon: planeImgIcon(p.hdg) }).bindTooltip(tooltipHTML(p));
           marker.addTo(planesLayer);
           planeMarkers.set(p.hex, { marker:marker, last:Date.now() });
         } else {
           var obj = planeMarkers.get(p.hex);
           obj.marker.setLatLng(pos);
-          obj.marker.setIcon(planeIcon(p.hdg));
+          obj.marker.setIcon(planeImgIcon(p.hdg));
           obj.marker.setTooltipContent(tooltipHTML(p));
           obj.last = Date.now();
         }
