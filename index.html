@@ -40,7 +40,7 @@
 <script src="https://unpkg.com/geotiff@2.1.3/dist-browser/geotiff.min.js"></script>
 <script src="https://unpkg.com/georaster@1.6.1/dist/georaster.browser.min.js"></script>
 <script>
-  // גיבוי/ווידוא ש-parseGeoraster קיים כגלובלי
+  // וידוא/גיבוי ש-parseGeoraster גלובלי
   if (typeof window.parseGeoraster === 'undefined' &&
       window.georaster && typeof window.georaster.parseGeoraster === 'function') {
     window.parseGeoraster = window.georaster.parseGeoraster;
@@ -65,7 +65,8 @@
   var LLBG = { lat: 31.9906, lon: 34.8663 };
   var DIST_NM = 100;
   var PROXY_BASE = 'https://misty-wildflower-6947.shaharmoshayof3.workers.dev';
-  var GEO_TIFF_URL = 'ATS1.tif';
+  // כתובת מוחלטת ל-ATS1.tif כדי למנוע תקלות נתיב יחסי
+  var GEO_TIFF_URL = new URL('ATS1.tif', location.href).href;
 
   var map = L.map('map', { preferCanvas:true }).setView([LLBG.lat, LLBG.lon], 10);
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom:19, attribution:'&copy; OpenStreetMap'}).addTo(map);
@@ -125,6 +126,10 @@
   function selectPlane(hex){ selectedHex = hex; trailData = []; trailPolyline.setLatLngs([]); }
   function attachSelectHandler(marker, hex){ marker.on('click', function(){ selectPlane(hex); }); }
 
+  // המטוסים — תמיד רצים מיד, בלי תלות ב-GeoTIFF
+  refresh();
+  setInterval(refresh, 10000);
+
   async function refresh(){
     setError('');
     try{
@@ -166,22 +171,7 @@
     }catch(e){ setError('שגיאה: ' + e.message); }
   }
 
-  // 1) המטוסים — תמיד נתחיל אותם מיד, בלי תלות ב-GeoTIFF
-  refresh();
-  setInterval(refresh, 10000);
-
-  // 2) ה-GeoTIFF — נטען בנפרד, כש-georaster זמין
-  (async function(){
-    var ok = await ensureParseGeoraster();
-    if (!ok){
-      console.warn('georaster לא נטען — מדלגים על טעינת GeoTIFF');
-      return; // לא מפילים את המטוסים
-    }
-    await loadGeoTiffFromUrl(GEO_TIFF_URL);
-  })();
-
-
-  // ==== GeoTIFF helpers ====
+  // ==== GeoTIFF: טעינה אוטומטית מ-ATS1.tif ====
   async function loadGeoTiffFromUrl(url){
     setError(''); setStatus('טוען GeoTIFF מכתובת: ' + url + ' ...');
     try{
@@ -189,6 +179,7 @@
       if (!r.ok) throw new Error('HTTP ' + r.status);
       var buf = await r.arrayBuffer();
       var georaster = await parseGeoraster(buf);
+      console.log('GeoTIFF info:', { projection: georaster.projection, noDataValue: georaster.noDataValue, bands: georaster.numberOfBands, width: georaster.width, height: georaster.height });
       if (geoLayer) { map.removeLayer(geoLayer); geoLayer = null; }
       geoLayer = new GeoRasterLayer({ georaster:georaster, opacity:Number(document.getElementById('opacity').value||0.7), resolution:256 });
       geoLayer.addTo(map);
@@ -209,6 +200,13 @@
       setStatus('GeoTIFF נטען בהצלחה (קובץ מקומי)');
     }catch(err){ setError('טעינת GeoTIFF נכשלה: ' + err.message + ' | ודא שזה GeoTIFF ב-EPSG:4326'); }
   }
+
+  // נטען את ה-GeoTIFF בנפרד לאחר ש-georaster זמין, בלי לפגוע במטוסים
+  (async function(){
+    var ok = await ensureParseGeoraster();
+    if (!ok){ console.warn('georaster לא נטען — מדלגים על טעינת GeoTIFF'); return; }
+    await loadGeoTiffFromUrl(GEO_TIFF_URL);
+  })();
 
   // אירועי UI
   document.getElementById('file').addEventListener('change', function(e){ var f=e.target.files&&e.target.files[0]; if(f) loadGeoTiff(f); });
