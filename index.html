@@ -38,15 +38,33 @@
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://unpkg.com/geotiff@2.1.3/dist-browser/geotiff.min.js"></script>
-<!-- ⭐️ השורה החסרה שתיקנה את parseGeoraster -->
 <script src="https://unpkg.com/georaster@1.6.1/dist/georaster.browser.min.js"></script>
+<script>
+  // גיבוי/ווידוא ש-parseGeoraster קיים כגלובלי
+  if (typeof window.parseGeoraster === 'undefined' &&
+      window.georaster && typeof window.georaster.parseGeoraster === 'function') {
+    window.parseGeoraster = window.georaster.parseGeoraster;
+  }
+  async function ensureParseGeoraster(){
+    if (typeof window.parseGeoraster === 'function') return true;
+    await new Promise(function(res){
+      var s = document.createElement('script');
+      s.src = 'https://cdn.jsdelivr.net/npm/georaster@1.6.1/dist/georaster.browser.min.js';
+      s.onload = res; document.head.appendChild(s);
+    });
+    if (typeof window.parseGeoraster !== 'function' &&
+        window.georaster && typeof window.georaster.parseGeoraster === 'function') {
+      window.parseGeoraster = window.georaster.parseGeoraster;
+    }
+    return (typeof window.parseGeoraster === 'function');
+  }
+</script>
 <script src="https://unpkg.com/georaster-layer-for-leaflet@3.10.0/dist/georaster-layer-for-leaflet.min.js"></script>
 <script>
   // ===== הגדרות =====
   var LLBG = { lat: 31.9906, lon: 34.8663 };
   var DIST_NM = 100;
   var PROXY_BASE = 'https://misty-wildflower-6947.shaharmoshayof3.workers.dev';
-  // GeoTIFF ששמת בריפו (אותו דומיין => אין CORS):
   var GEO_TIFF_URL = 'ATS1.tif';
 
   var map = L.map('map', { preferCanvas:true }).setView([LLBG.lat, LLBG.lon], 10);
@@ -147,9 +165,16 @@
       updateCircle();
     }catch(e){ setError('שגיאה: ' + e.message); }
   }
-  refresh(); setInterval(refresh, 10000);
 
-  // ==== GeoTIFF: טעינה אוטומטית מ-ATS1.tif + אפשרות להחלפה ידנית ====
+  // אתחול: ודא שה-parseGeoraster קיים לפני טעינה אוטומטית של ATS1.tif
+  (async function(){
+    var ok = await ensureParseGeoraster();
+    if (!ok){ setError('טעינת GeoTIFF נכשלה: georaster לא נטען'); return; }
+    await loadGeoTiffFromUrl(GEO_TIFF_URL);
+    refresh(); setInterval(refresh, 10000);
+  })();
+
+  // ==== GeoTIFF helpers ====
   async function loadGeoTiffFromUrl(url){
     setError(''); setStatus('טוען GeoTIFF מכתובת: ' + url + ' ...');
     try{
@@ -177,9 +202,6 @@
       setStatus('GeoTIFF נטען בהצלחה (קובץ מקומי)');
     }catch(err){ setError('טעינת GeoTIFF נכשלה: ' + err.message + ' | ודא שזה GeoTIFF ב-EPSG:4326'); }
   }
-
-  // טעינה אוטומטית בעת עליית הדף
-  loadGeoTiffFromUrl(GEO_TIFF_URL);
 
   // אירועי UI
   document.getElementById('file').addEventListener('change', function(e){ var f=e.target.files&&e.target.files[0]; if(f) loadGeoTiff(f); });
