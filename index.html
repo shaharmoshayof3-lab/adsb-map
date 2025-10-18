@@ -7,7 +7,7 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <style>
     html, body, #map { height:100%; margin:0; }
-    .panel {position:absolute; top:16px; right:16px; z-index:1000; background:#fff; padding:12px 14px; border-radius:12px; box-shadow:0 10px 25px rgba(0,0,0,.2); max-width:380px; font-family:system-ui,Arial;}
+    .panel {position:absolute; top:16px; right:16px; z-index:1000; background:#fff; padding:12px 14px; border-radius:12px; box-shadow:0 10px 25px rgba(0,0,0,.2); max-width:400px; font-family:system-ui,Arial;}
     .panel h3{margin:0 0 8px; font-size:16px}
     .row{display:grid; grid-template-columns:1fr auto; gap:8px; align-items:center; margin:8px 0}
     .row-1{margin-top:6px}
@@ -16,35 +16,23 @@
     #status{font-size:12px; color:#14532d}
     #error{font-size:12px; color:#b91c1c}
 
-    .plane-icon{ width:28px; height:28px; transform:translate(-14px,-14px); }
-    .plane-icon img{ width:28px; height:28px; transform-origin:50% 50%; filter: drop-shadow(0 0 1px rgba(0,0,0,.5)); }
+    .plane-icon{ width:30px; height:30px; transform:translate(-15px,-15px); }
+    .plane-icon img{ width:30px; height:30px; transform-origin:50% 50%; filter: drop-shadow(0 0 1px rgba(0,0,0,.6)); }
     .leaflet-tooltip{direction:rtl; text-align:right}
+    .legend{font-size:12px;color:#334155;margin-top:4px}
+    .legend span{display:inline-block;width:10px;height:10px;border-radius:2px;margin-left:4px;vertical-align:middle}
   </style>
 </head>
 <body>
 <div id="map"></div>
 <div class="panel">
   <h3>מפת פמ"ת (GeoTIFF) + מטוסים סביב נתב"ג</h3>
-  <div class="row">
-    <label>Load: GeoTIFF</label>
-    <input id="file" type="file" accept=".tif,.tiff" />
-  </div>
-  <div class="row">
-    <label>שקיפות המפה:</label>
-    <input id="opacity" type="range" min="0" max="1" step="0.02" value="0.7" />
-  </div>
-  <div class="row">
-    <label>מקור נתונים:</label>
-    <select id="provider"><option value="adsb.lol">ADSB.lol (דרך ה-Worker שלך)</option></select>
-  </div>
-  <div class="row">
-    <label>רדיוס (NM):</label>
-    <input id="distNm" type="number" min="10" max="150" step="5" value="100" />
-  </div>
-  <div class="row">
-    <button id="centerLlbg" class="btn">מרכז נתב"ג</button>
-    <button id="clearOverlay" class="btn secondary">הסר GeoTIFF</button>
-  </div>
+  <div class="row"><label>Load: GeoTIFF</label><input id="file" type="file" accept=".tif,.tiff" /></div>
+  <div class="row"><label>שקיפות המפה:</label><input id="opacity" type="range" min="0" max="1" step="0.02" value="0.7" /></div>
+  <div class="row"><label>מקור נתונים:</label><select id="provider"><option value="adsb.lol">ADSB.lol (דרך ה-Worker שלך)</option></select></div>
+  <div class="row"><label>רדיוס (NM):</label><input id="distNm" type="number" min="10" max="150" step="5" value="100" /></div>
+  <div class="row"><button id="centerLlbg" class="btn">מרכז נתב"ג</button><button id="clearOverlay" class="btn secondary">הסר GeoTIFF</button></div>
+  <div class="legend">צבע לפי גובה: <span style="background:#16a34a"></span> נמוך <span style="background:#2563eb"></span> בינוני <span style="background:#9333ea"></span> גבוה <span style="background:#ef4444"></span> גבוה מאוד</div>
   <div class="row-1"><div id="status"></div><div id="error"></div></div>
 </div>
 
@@ -62,38 +50,33 @@
 
   var planesLayer = L.layerGroup().addTo(map);
   var trailsLayer = L.layerGroup().addTo(map);
-  var planeMarkers = new Map();
-  var planeTrails = new Map();
+  var planeMarkers = new Map(); // hex -> {marker, last}
+  var selectedHex = null;
+  var trailData = []; // נק׳ השובל של המטוס הנבחר
+  var trailPolyline = L.polyline([], { color:'#84cc16', weight:3, opacity:0.9 }).addTo(trailsLayer);
+
   var geoLayer = null; var nmCircle = null;
 
   function updateCircle(){
-    var meters = DIST_NM * 1852;
-    if (nmCircle) nmCircle.remove();
+    var meters = DIST_NM * 1852; if (nmCircle) nmCircle.remove();
     nmCircle = L.circle([LLBG.lat, LLBG.lon], {radius:meters, color:'#2563eb', weight:1, fill:false}).addTo(map);
   }
   updateCircle();
 
-  // צבע וגודל לפי גובה
+  // צבע וגודל לפי גובה (צבע חזק ונראה)
   function altStyle(alt){
-    if (!alt && alt !== 0) return { color:'#222', size:26 };
-    if (alt < 1500) return { color:'#18a34a', size:28 };       // ירוק – נמוך
-    if (alt < 10000) return { color:'#2563eb', size:26 };      // כחול – בינוני
-    if (alt < 25000) return { color:'#9333ea', size:24 };      // סגול – גבוה
-    return { color:'#ef4444', size:24 };                       // אדום – ממש גבוה
+    if (alt == null) return { hue: 0, size: 28, saturate:1.0, bright:1.0, base:'#2563eb' };
+    if (alt < 1500)  return { hue:110, size: 30, saturate:1.3, bright:1.15, base:'#16a34a' }; // ירוק
+    if (alt < 10000) return { hue:220, size: 28, saturate:1.2, bright:1.1,  base:'#2563eb' }; // כחול
+    if (alt < 25000) return { hue:285, size: 26, saturate:1.1, bright:1.05, base:'#9333ea' }; // סגול
+    return { hue:  0, size: 26, saturate:1.0, bright:1.0,  base:'#ef4444' }; // אדום
   }
 
   // אייקון המטוס מתוך a320.svg בשורש הריפו
   function planeImgIcon(deg, alt){
     var st = altStyle(alt);
     var s = st.size;
-    // צביעת ה‑SVG באמצעות filter: hue-rotate + brightness (ה‑SVG שחור)
-    var hue = 0;
-    if (st.color === '#18a34a') hue = 110;      // ירקרק
-    else if (st.color === '#2563eb') hue = 220; // כחול
-    else if (st.color === '#9333ea') hue = 285; // סגול
-    else if (st.color === '#ef4444') hue = 0;   // אדום
-
-    var html = '<img src="a320.svg" style="width:'+s+'px;height:'+s+'px;transform:rotate('+(deg||0)+'deg);transform-origin:50% 50%;filter:hue-rotate('+hue+'deg) brightness(1.1)">';
+    var html = '<img src="a320.svg" style="width:'+s+'px;height:'+s+'px;transform:rotate('+(deg||0)+'deg);transform-origin:50% 50%;filter:hue-rotate('+st.hue+'deg) saturate('+st.saturate+') brightness('+st.bright+')">';
     return L.divIcon({ className:'plane-icon', html: html, iconSize:[s,s], iconAnchor:[s/2,s/2] });
   }
 
@@ -119,21 +102,14 @@
     }).filter(function(m){ return Number.isFinite(m.lat) && Number.isFinite(m.lon) && m.hex; });
   }
 
-  function pushTrailPoint(hex, lat, lon){
-    var arr = planeTrails.get(hex);
-    if (!arr){ arr = []; planeTrails.set(hex, arr); }
-    arr.push([lat, lon]);
-    // שמור רק 30 נק׳ אחרונות
-    if (arr.length > 30) arr.splice(0, arr.length - 30);
+  function selectPlane(hex){
+    selectedHex = hex;
+    trailData = []; // נתחיל שובל חדש
+    trailPolyline.setLatLngs([]);
+  }
 
-    var poly = trailsLayer._layers && Object.values(trailsLayer._layers).find(function(l){ return l.options && l.options._hex === hex; });
-    if (!poly){
-      poly = L.polyline(arr, { color:'#a3e635', weight:2, opacity:0.9 });
-      poly.options._hex = hex;
-      poly.addTo(trailsLayer);
-    } else {
-      poly.setLatLngs(arr);
-    }
+  function attachSelectHandler(marker, hex){
+    marker.on('click', function(){ selectPlane(hex); });
   }
 
   async function refresh(){
@@ -146,16 +122,22 @@
       planes.forEach(function(p){
         seen.add(p.hex);
         var pos = [p.lat, p.lon];
-        pushTrailPoint(p.hex, p.lat, p.lon);
+
+        // אם זה המטוס הנבחר, עדכן שובל
+        if (selectedHex && p.hex === selectedHex){
+          trailData.push(pos);
+          if (trailData.length > 60) trailData.splice(0, trailData.length - 60);
+          trailPolyline.setLatLngs(trailData);
+        }
 
         if (!planeMarkers.has(p.hex)){
           var marker = L.marker(pos, { icon: planeImgIcon(p.hdg, p.alt) }).bindTooltip(tooltipHTML(p));
           marker.addTo(planesLayer);
+          attachSelectHandler(marker, p.hex);
           planeMarkers.set(p.hex, { marker:marker, last:now });
         } else {
           var obj = planeMarkers.get(p.hex);
-          // תנועה חלקה: אנימציית מעבר קצרה
-          obj.marker._icon && (obj.marker._icon.style.transition = 'transform 0.7s linear');
+          obj.marker._icon && (obj.marker._icon.style.transition = 'transform 0.6s linear');
           obj.marker.setLatLng(pos);
           obj.marker.setIcon(planeImgIcon(p.hdg, p.alt));
           obj.marker.setTooltipContent(tooltipHTML(p));
@@ -166,20 +148,22 @@
       // ניקוי ישנים
       planeMarkers.forEach(function(obj, hex){
         if (!seen.has(hex) && now - obj.last > 60000){
-          obj.marker.remove();
-          planeMarkers.delete(hex);
-          planeTrails.delete(hex);
-          // מחיקת הפולי־ליין המתאים
-          var poly = trailsLayer._layers && Object.values(trailsLayer._layers).find(function(l){ return l.options && l.options._hex === hex; });
-          if (poly) trailsLayer.removeLayer(poly);
+          if (hex === selectedHex){ selectPlane(null); }
+          obj.marker.remove(); planeMarkers.delete(hex);
         }
       });
 
-      setStatus('נמצאו ' + planes.length + ' מטוסים | מקור: ADSB.lol דרך Cloudflare Worker');
+      setStatus('נמצאו ' + planes.length + ' מטוסים | מקור: ADSB.lol דרך Cloudflare Worker' + (selectedHex? ' | שובל למטוס: '+selectedHex : ''));
       updateCircle();
     }catch(e){ setError('שגיאה: ' + e.message); }
   }
   refresh(); setInterval(refresh, 10000);
+
+  // טעינת GeoTIFF
+  var geoLayer = null;
+  document.getElementById('file').addEventListener('change', function(e){ var f=e.target.files&&e.target.files[0]; if(f) loadGeoTiff(f); });
+  document.getElementById('opacity').addEventListener('input', function(e){ if(geoLayer) geoLayer.setOpacity(Number(e.target.value)); });
+  document.getElementById('clearOverlay').addEventListener('click', function(){ if(geoLayer){ map.removeLayer(geoLayer); geoLayer=null; setStatus('GeoTIFF הוסר'); }});
 
   async function loadGeoTiff(file){
     setError(''); setStatus('טוען GeoTIFF...');
@@ -194,9 +178,6 @@
     }catch(err){ setError('טעינת GeoTIFF נכשלה: ' + err.message + ' | ודא שזה GeoTIFF ב-EPSG:4326'); }
   }
 
-  document.getElementById('file').addEventListener('change', function(e){ var f=e.target.files&&e.target.files[0]; if(f) loadGeoTiff(f); });
-  document.getElementById('opacity').addEventListener('input', function(e){ if(geoLayer) geoLayer.setOpacity(Number(e.target.value)); });
-  document.getElementById('clearOverlay').addEventListener('click', function(){ if(geoLayer){ map.removeLayer(geoLayer); geoLayer=null; setStatus('GeoTIFF הוסר'); }});
   document.getElementById('centerLlbg').addEventListener('click', function(){ map.setView([LLBG.lat, LLBG.lon], 10); updateCircle(); });
   document.getElementById('distNm').addEventListener('change', function(){ DIST_NM = Number(this.value||100); updateCircle(); refresh(); });
   document.getElementById('provider').addEventListener('change', refresh);
