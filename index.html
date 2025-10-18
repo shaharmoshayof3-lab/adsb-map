@@ -7,7 +7,7 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <style>
     html, body, #map { height:100%; margin:0; }
-    .panel {position:absolute; top:16px; right:16px; z-index:1000; background:#fff; padding:12px 14px; border-radius:12px; box-shadow:0 10px 25px rgba(0,0,0,.2); max-width:360px; font-family:system-ui,Arial;}
+    .panel {position:absolute; top:16px; right:16px; z-index:1000; background:#fff; padding:12px 14px; border-radius:12px; box-shadow:0 10px 25px rgba(0,0,0,.2); max-width:380px; font-family:system-ui,Arial;}
     .panel h3{margin:0 0 8px; font-size:16px}
     .row{display:grid; grid-template-columns:1fr auto; gap:8px; align-items:center; margin:8px 0}
     .row-1{margin-top:6px}
@@ -17,7 +17,7 @@
     #error{font-size:12px; color:#b91c1c}
 
     .plane-icon{ width:28px; height:28px; transform:translate(-14px,-14px); }
-    .plane-icon img{ width:28px; height:28px; transform-origin:50% 50%; }
+    .plane-icon img{ width:28px; height:28px; transform-origin:50% 50%; filter: drop-shadow(0 0 1px rgba(0,0,0,.5)); }
     .leaflet-tooltip{direction:rtl; text-align:right}
   </style>
 </head>
@@ -61,7 +61,9 @@
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom:19, attribution:'&copy; OpenStreetMap'}).addTo(map);
 
   var planesLayer = L.layerGroup().addTo(map);
+  var trailsLayer = L.layerGroup().addTo(map);
   var planeMarkers = new Map();
+  var planeTrails = new Map();
   var geoLayer = null; var nmCircle = null;
 
   function updateCircle(){
@@ -71,10 +73,27 @@
   }
   updateCircle();
 
-  // אייקון המטוס מתוך הקובץ a320.svg (בריפו שלך)
-  function planeImgIcon(deg, size){
-    var s = size || 28;
-    var html = '<img src="a320.svg" style="width:'+s+'px;height:'+s+'px;transform:rotate('+(deg||0)+'deg);transform-origin:50% 50%">';
+  // צבע וגודל לפי גובה
+  function altStyle(alt){
+    if (!alt && alt !== 0) return { color:'#222', size:26 };
+    if (alt < 1500) return { color:'#18a34a', size:28 };       // ירוק – נמוך
+    if (alt < 10000) return { color:'#2563eb', size:26 };      // כחול – בינוני
+    if (alt < 25000) return { color:'#9333ea', size:24 };      // סגול – גבוה
+    return { color:'#ef4444', size:24 };                       // אדום – ממש גבוה
+  }
+
+  // אייקון המטוס מתוך a320.svg בשורש הריפו
+  function planeImgIcon(deg, alt){
+    var st = altStyle(alt);
+    var s = st.size;
+    // צביעת ה‑SVG באמצעות filter: hue-rotate + brightness (ה‑SVG שחור)
+    var hue = 0;
+    if (st.color === '#18a34a') hue = 110;      // ירקרק
+    else if (st.color === '#2563eb') hue = 220; // כחול
+    else if (st.color === '#9333ea') hue = 285; // סגול
+    else if (st.color === '#ef4444') hue = 0;   // אדום
+
+    var html = '<img src="a320.svg" style="width:'+s+'px;height:'+s+'px;transform:rotate('+(deg||0)+'deg);transform-origin:50% 50%;filter:hue-rotate('+hue+'deg) brightness(1.1)">';
     return L.divIcon({ className:'plane-icon', html: html, iconSize:[s,s], iconAnchor:[s/2,s/2] });
   }
 
@@ -90,7 +109,7 @@
   function setError(m){ document.getElementById('error').textContent = m || ''; }
 
   async function fetchPlanes(lat, lon, distNm){
-    var url = PROXY_BASE + '/point/' + lat + '/' + lon + '/' + distNm; // דרך ה-Worker
+    var url = PROXY_BASE + '/point/' + lat + '/' + lon + '/' + distNm;
     var r = await fetch(url, { cache:'no-store' });
     if (!r.ok) throw new Error('HTTP ' + r.status);
     var data = await r.json();
@@ -100,30 +119,62 @@
     }).filter(function(m){ return Number.isFinite(m.lat) && Number.isFinite(m.lon) && m.hex; });
   }
 
+  function pushTrailPoint(hex, lat, lon){
+    var arr = planeTrails.get(hex);
+    if (!arr){ arr = []; planeTrails.set(hex, arr); }
+    arr.push([lat, lon]);
+    // שמור רק 30 נק׳ אחרונות
+    if (arr.length > 30) arr.splice(0, arr.length - 30);
+
+    var poly = trailsLayer._layers && Object.values(trailsLayer._layers).find(function(l){ return l.options && l.options._hex === hex; });
+    if (!poly){
+      poly = L.polyline(arr, { color:'#a3e635', weight:2, opacity:0.9 });
+      poly.options._hex = hex;
+      poly.addTo(trailsLayer);
+    } else {
+      poly.setLatLngs(arr);
+    }
+  }
+
   async function refresh(){
     setError('');
     try{
       var planes = await fetchPlanes(LLBG.lat, LLBG.lon, DIST_NM);
       var seen = new Set();
+      var now = Date.now();
+
       planes.forEach(function(p){
         seen.add(p.hex);
         var pos = [p.lat, p.lon];
+        pushTrailPoint(p.hex, p.lat, p.lon);
+
         if (!planeMarkers.has(p.hex)){
-          var marker = L.marker(pos, { icon: planeImgIcon(p.hdg) }).bindTooltip(tooltipHTML(p));
+          var marker = L.marker(pos, { icon: planeImgIcon(p.hdg, p.alt) }).bindTooltip(tooltipHTML(p));
           marker.addTo(planesLayer);
-          planeMarkers.set(p.hex, { marker:marker, last:Date.now() });
+          planeMarkers.set(p.hex, { marker:marker, last:now });
         } else {
           var obj = planeMarkers.get(p.hex);
+          // תנועה חלקה: אנימציית מעבר קצרה
+          obj.marker._icon && (obj.marker._icon.style.transition = 'transform 0.7s linear');
           obj.marker.setLatLng(pos);
-          obj.marker.setIcon(planeImgIcon(p.hdg));
+          obj.marker.setIcon(planeImgIcon(p.hdg, p.alt));
           obj.marker.setTooltipContent(tooltipHTML(p));
-          obj.last = Date.now();
+          obj.last = now;
         }
       });
-      var now = Date.now();
+
+      // ניקוי ישנים
       planeMarkers.forEach(function(obj, hex){
-        if (!seen.has(hex) && now - obj.last > 60000){ obj.marker.remove(); planeMarkers.delete(hex); }
+        if (!seen.has(hex) && now - obj.last > 60000){
+          obj.marker.remove();
+          planeMarkers.delete(hex);
+          planeTrails.delete(hex);
+          // מחיקת הפולי־ליין המתאים
+          var poly = trailsLayer._layers && Object.values(trailsLayer._layers).find(function(l){ return l.options && l.options._hex === hex; });
+          if (poly) trailsLayer.removeLayer(poly);
+        }
       });
+
       setStatus('נמצאו ' + planes.length + ' מטוסים | מקור: ADSB.lol דרך Cloudflare Worker');
       updateCircle();
     }catch(e){ setError('שגיאה: ' + e.message); }
