@@ -34,7 +34,7 @@
   </div>
   <div class="row">
     <label>מקור נתונים:</label>
-    <select id="provider"><option value="adsb.lol">ADSB.lol (ללא מפתח)</option></select>
+    <select id="provider"><option value="adsb.lol">ADSB.lol (דרך ה-Worker שלך)</option></select>
   </div>
   <div class="row">
     <label>רדיוס (NM):</label>
@@ -52,9 +52,12 @@
 <script src="https://unpkg.com/georaster@1.6.1/dist/georaster.browser.min.js"></script>
 <script src="https://unpkg.com/georaster-layer-for-leaflet@3.10.0/dist/georaster-layer-for-leaflet.min.js"></script>
 <script>
-  // ==== הגדרות בסיס ====
+  // ===== הגדרות =====
   var LLBG = { lat: 31.9906, lon: 34.8663 };
   var DIST_NM = 100;
+  // שים כאן את כתובת ה-Worker שלך (את זו שהצגת בתמונה)
+  var PROXY_BASE = 'https://misty-wildflower-6947.shaharmoshayof3.workers.dev';
+
   var map = L.map('map', { preferCanvas:true }).setView([LLBG.lat, LLBG.lon], 10);
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom:19, attribution:'&copy; OpenStreetMap'}).addTo(map);
 
@@ -87,8 +90,8 @@
   function setStatus(m){ document.getElementById('status').textContent = m || ''; }
   function setError(m){ document.getElementById('error').textContent = m || ''; }
 
-  async function fetchPlanesLOL(lat, lon, distNm){
-    var url = 'https://api.adsb.lol/v2/point/' + lat + '/' + lon + '/' + distNm;
+  async function fetchPlanesViaWorker(lat, lon, distNm){
+    var url = PROXY_BASE + '/point/' + lat + '/' + lon + '/' + distNm; // פנייה דרך ה-Worker
     var r = await fetch(url, { cache:'no-store' });
     if (!r.ok) throw new Error('HTTP ' + r.status);
     var data = await r.json();
@@ -101,7 +104,7 @@
   async function refresh(){
     setError('');
     try{
-      var planes = await fetchPlanesLOL(LLBG.lat, LLBG.lon, DIST_NM);
+      var planes = await fetchPlanesViaWorker(LLBG.lat, LLBG.lon, DIST_NM);
       var seen = new Set();
       planes.forEach(function(p){
         seen.add(p.hex);
@@ -118,14 +121,13 @@
           obj.last = Date.now();
         }
       });
-      // הסרת ישנים
       var now = Date.now();
       planeMarkers.forEach(function(obj, hex){
         if (!seen.has(hex) && now - obj.last > 60000){ obj.marker.remove(); planeMarkers.delete(hex); }
       });
-      setStatus('נמצאו ' + planes.length + ' מטוסים | מקור: ADSB.lol | רענון כל 10 שניות');
+      setStatus('נמצאו ' + planes.length + ' מטוסים | מקור: ADSB.lol דרך Cloudflare Worker');
       updateCircle();
-    }catch(e){ setError('Failed to fetch: ' + e.message + ' | בדוק חוסם פרסומות או חיבור אינטרנט'); }
+    }catch(e){ setError('שגיאה: ' + e.message); }
   }
   refresh(); setInterval(refresh, 10000);
 
